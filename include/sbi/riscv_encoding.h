@@ -173,6 +173,25 @@
 #define HGATP_MODE_SHIFT		HGATP32_MODE_SHIFT
 #endif
 
+#if __riscv_xlen == 64
+#define MHPMEVENT_OF			(_UL(1) << 63)
+#define MHPMEVENT_MINH			(_UL(1) << 62)
+#define MHPMEVENT_SINH			(_UL(1) << 61)
+#define MHPMEVENT_UINH			(_UL(1) << 60)
+#define MHPMEVENT_VSINH			(_UL(1) << 59)
+#define MHPMEVENT_VUINH			(_UL(1) << 58)
+#else
+#define MHPMEVENT_OF			(_ULL(1) << 63)
+#define MHPMEVENT_MINH			(_ULL(1) << 62)
+#define MHPMEVENT_SINH			(_ULL(1) << 61)
+#define MHPMEVENT_UINH			(_ULL(1) << 60)
+#define MHPMEVENT_VSINH			(_ULL(1) << 59)
+#define MHPMEVENT_VUINH			(_ULL(1) << 58)
+
+#define MHPMEVENTH_OF			(_UL(1) << 31)
+#endif
+
+#define MHPMEVENT_SSCOF_MASK		_ULL(0xFFFF000000000000)
 /* ===== User-level CSRs ===== */
 
 /* User Trap Setup (N-extension) */
