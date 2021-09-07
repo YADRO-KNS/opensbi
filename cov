@@ -1,0 +1,22 @@
+The Sscofpmf extension [1] ('Ss' for Privileged arch and Supervisor-level
+extensions, and 'cofpmf' for Count OverFlow and Privilege Mode Filtering)
+allows the perf like tool to handle overflow interrupts and filtering support.
+
+This series implements all the bits required to support "Sscof" extension and
+few other fixes. This series can be found at github[4] as well. 
+It has been tested with Linux kernel patches[3] for different hardware/firmware
+events on Qemu.
+
+This patch requires QEMU support series[2] to work. As the Qemu did not
+support mhpmevent/mhpmcounter before this series, these changes are not backward
+compatible to avoid code churn. Anybody who wants to use perf must include
+Qemu, OpenSBI, Linux kernel patches.
+
+[1] https://drive.google.com/file/d/171j4jFjIkKdj5LWcExphq4xG_2sihbfd/edit 
+https://github.com/riscv/riscv-sbi-doc/blob/master/riscv-sbi.adoc
+[2] https://github.com/atishp04/qemu/tree/riscv_pmu_v2
+[3] https://github.com/atishp04/linux/tree/riscv_pmu_v3 
+[4] https://github.com/atishp04/opensbi/tree/pmu_sscofpmf
+
+option-subject Sscof extension support
+option-prefix RFC PATCH
