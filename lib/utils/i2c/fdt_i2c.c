@@ -18,7 +18,10 @@
 
 #include <sbi/sbi_console.h>
 
+extern struct fdt_i2c_adapter fdt_i2c_adapter_sifive;
+
 static struct fdt_i2c_adapter *i2c_adapter_drivers[] = {
+	&fdt_i2c_adapter_sifive
 };
 
 static struct fdt_i2c_adapter *fdt_i2c_adapter_driver(struct i2c_adapter *adapter)
