@@ -30,6 +30,9 @@ struct sbi_pmu_fw_event {
 	/* Event associated with the particular counter */
 	uint32_t event_idx;
 
+	/* Stored on start value to calculate delta on read */
+	unsigned long data;
+
 	/* Current value of the counter */
 	unsigned long curr_count;
 
@@ -124,9 +127,31 @@ static int pmu_ctr_read_fw(uint32_t cidx, unsigned long *cval,
 {
 	u32 hartid = current_hartid();
 	struct sbi_pmu_fw_event fevent;
+	unsigned long delta = 0;
 
 	fevent = fw_event_map[hartid][fw_evt_code];
-	*cval = fevent.curr_count;
+
+	switch(fw_evt_code) {
+	case SBI_PMU_FW_SHADOW_CPU_CYCLES:
+		delta = csr_read_num(CSR_MCYCLE);
+		/* We could have CSR overwritten by pmu user, let's add a sanity check */
+		if(delta < fevent.data)
+			return SBI_EINVAL;
+		delta -= fevent.data;
+		*cval = fevent.curr_count + delta;
+		break;
+	case SBI_PMU_FW_SHADOW_INSTRUCTIONS:
+		delta = csr_read_num(CSR_MINSTRET);
+		/* We could have CSR overwritten by pmu user, let's add a sanity check */
+		if(delta < fevent.data)
+			return SBI_EINVAL;
+		delta -= fevent.data;
+		*cval = fevent.curr_count + delta;
+		break;
+	default:
+		*cval = fevent.curr_count;
+		break;
+	}
 
 	return 0;
 }
@@ -239,8 +264,9 @@ static void pmu_ctr_write_hw(uint32_t cidx, uint64_t ival)
 
 static int pmu_ctr_start_hw(uint32_t cidx, uint64_t ival, bool ival_update)
 {
+	struct sbi_scratch *scratch = sbi_scratch_thishart_ptr();
 	unsigned long mctr_en = csr_read(CSR_MCOUNTEREN);
-	unsigned long mctr_inhbt = csr_read(CSR_MCOUNTINHIBIT);
+	unsigned long mctr_inhbt = 0;
 
 	/* Make sure the counter index lies within the range and is not TM bit */
 	if (cidx > num_hw_ctrs || cidx == 1)
@@ -250,13 +276,18 @@ static int pmu_ctr_start_hw(uint32_t cidx, uint64_t ival, bool ival_update)
 		return SBI_EALREADY_STARTED;
 
 	__set_bit(cidx, &mctr_en);
-	__clear_bit(cidx, &mctr_inhbt);
+	if (sbi_hart_has_feature(scratch, SBI_HART_HAS_MCOUNTINHIBIT)) {
+		mctr_inhbt = csr_read(CSR_MCOUNTINHIBIT);
+		__clear_bit(cidx, &mctr_inhbt);
+	}
 
 	if (ival_update)
 		pmu_ctr_write_hw(cidx, ival);
 
 	csr_write(CSR_MCOUNTEREN, mctr_en);
-	csr_write(CSR_MCOUNTINHIBIT, mctr_inhbt);
+
+	if (sbi_hart_has_feature(scratch, SBI_HART_HAS_MCOUNTINHIBIT))
+		csr_write(CSR_MCOUNTINHIBIT, mctr_inhbt);
 
 	return 0;
 }
@@ -270,6 +301,24 @@ static int pmu_ctr_start_fw(uint32_t cidx, uint32_t fw_evt_code,
 	fevent = &fw_event_map[hartid][fw_evt_code];
 	if (ival_update)
 		fevent->curr_count = ival;
+
+	switch(fw_evt_code) {
+	case SBI_PMU_FW_SHADOW_CPU_CYCLES:
+		fevent->data = csr_read_num(CSR_MCYCLE);
+		break;
+	case SBI_PMU_FW_SHADOW_INSTRUCTIONS:
+		fevent->data = csr_read_num(CSR_MINSTRET);
+		break;
+	case SBI_PMU_FW_MACHINE_CYCLES:
+		fevent->data = csr_read_num(CSR_MCYCLE);
+		break;
+	case SBI_PMU_FW_MACHINE_INSTRUCTIONS:
+		fevent->data = csr_read_num(CSR_MINSTRET);
+		break;
+	default:
+		break;
+	}
+
 	fevent->bStarted = TRUE;
 
 	return 0;
@@ -306,18 +355,24 @@ int sbi_pmu_ctr_start(unsigned long cbase, unsigned long cmask,
 
 static int pmu_ctr_stop_hw(uint32_t cidx)
 {
+	struct sbi_scratch *scratch = sbi_scratch_thishart_ptr();
 	unsigned long mctr_en = csr_read(CSR_MCOUNTEREN);
-	unsigned long mctr_inhbt = csr_read(CSR_MCOUNTINHIBIT);
+	unsigned long mctr_inhbt = 0x0;
 
 	/* Make sure the counter index lies within the range and is not TM bit */
 	if (cidx > num_hw_ctrs || cidx == 1)
 		return SBI_EINVAL;
 
+	if (sbi_hart_has_feature(scratch, SBI_HART_HAS_MCOUNTINHIBIT))
+		mctr_inhbt = csr_read(CSR_MCOUNTINHIBIT);
+
 	if (__test_bit(cidx, &mctr_en) && !__test_bit(cidx, &mctr_inhbt)) {
-		__set_bit(cidx, &mctr_inhbt);
 		__clear_bit(cidx, &mctr_en);
 		csr_write(CSR_MCOUNTEREN, mctr_en);
-		csr_write(CSR_MCOUNTINHIBIT, mctr_inhbt);
+		if (sbi_hart_has_feature(scratch, SBI_HART_HAS_MCOUNTINHIBIT)) {
+			__set_bit(cidx, &mctr_inhbt);
+			csr_write(CSR_MCOUNTINHIBIT, mctr_inhbt);
+		}
 		return 0;
 	} else
 		return SBI_EALREADY_STOPPED;
@@ -326,8 +381,22 @@ static int pmu_ctr_stop_hw(uint32_t cidx)
 static int pmu_ctr_stop_fw(uint32_t cidx, uint32_t fw_evt_code)
 {
 	u32 hartid = current_hartid();
+	struct sbi_pmu_fw_event *fevent = &fw_event_map[hartid][fw_evt_code];
 
-	fw_event_map[hartid][fw_evt_code].bStarted = FALSE;
+	fevent->bStarted = FALSE;
+
+	switch(fw_evt_code) {
+	case SBI_PMU_FW_MACHINE_CYCLES:
+		fevent->curr_count += csr_read_num(CSR_MCYCLE) - fevent->data;
+		fevent->data = 0;
+		break;
+	case SBI_PMU_FW_MACHINE_INSTRUCTIONS:
+		fevent->curr_count += csr_read_num(CSR_MINSTRET) - fevent->data;
+		fevent->data = 0;
+		break;
+	default:
+		break;
+	}
 
 	return 0;
 }
@@ -380,7 +449,8 @@ static int pmu_update_hw_mhpmevent(struct sbi_pmu_hw_event *hw_evt, int ctr_idx,
 	 * The OVF bit also should be cleared here in case it was not cleared
 	 * during event stop.
 	 */
-	csr_write_num(CSR_MCOUNTINHIBIT + ctr_idx, mhpmevent_val);
+	if (sbi_hart_has_feature(scratch, SBI_HART_HAS_MCOUNTINHIBIT))
+		csr_write_num(CSR_MCOUNTINHIBIT + ctr_idx, mhpmevent_val);
 
 	return 0;
 }
@@ -388,11 +458,12 @@ static int pmu_update_hw_mhpmevent(struct sbi_pmu_hw_event *hw_evt, int ctr_idx,
 static int pmu_ctr_find_hw(unsigned long cbase, unsigned long cmask,
 			   unsigned long event_idx, uint64_t data)
 {
+	struct sbi_scratch *scratch = sbi_scratch_thishart_ptr();
 	unsigned long ctr_mask;
 	int i, ret = 0, ctr_idx = SBI_ENOTSUPP;
 	struct sbi_pmu_hw_event *temp;
 	unsigned long mctr_en = csr_read(CSR_MCOUNTEREN);
-	unsigned long mctr_inhbt = csr_read(CSR_MCOUNTINHIBIT);
+	unsigned long mctr_inhbt = 0xFFFFFFFF;
 	int evt_idx_code = get_cidx_code(event_idx);
 
 	if (cbase > num_hw_ctrs)
@@ -403,6 +474,9 @@ static int pmu_ctr_find_hw(unsigned long cbase, unsigned long cmask,
 		return 0;
 	else if (evt_idx_code == SBI_PMU_HW_INSTRUCTIONS)
 		return 2;
+
+	if (sbi_hart_has_feature(scratch, SBI_HART_HAS_MCOUNTINHIBIT))
+		mctr_inhbt = csr_read(CSR_MCOUNTINHIBIT);
 
 	for (i = 0; i < num_hw_events; i++) {
 		temp = &hw_event_map[i];
@@ -532,6 +606,38 @@ inline int sbi_pmu_ctr_incr_fw(enum sbi_pmu_fw_event_code_id fw_id)
 	return 0;
 }
 
+void sbi_pmu_ctr_mm_enter()
+{
+	u32 hartid = current_hartid();
+	struct sbi_pmu_fw_event *fevent;
+
+	fevent = &fw_event_map[hartid][SBI_PMU_FW_MACHINE_CYCLES];
+	if (unlikely(fevent->bStarted))
+		fevent->data = csr_read_num(CSR_MCYCLE);
+
+	fevent = &fw_event_map[hartid][SBI_PMU_FW_MACHINE_INSTRUCTIONS];
+	if (unlikely(fevent->bStarted))
+		fevent->data = csr_read_num(CSR_MINSTRET);
+}
+
+void sbi_pmu_ctr_mm_exit()
+{
+	u32 hartid = current_hartid();
+	struct sbi_pmu_fw_event *fevent;
+
+	fevent = &fw_event_map[hartid][SBI_PMU_FW_MACHINE_CYCLES];
+	if (unlikely(fevent->bStarted) && fevent->data != 0) {
+		fevent->curr_count += csr_read_num(CSR_MCYCLE) - fevent->data;
+		fevent->data = 0;
+	}
+
+	fevent = &fw_event_map[hartid][SBI_PMU_FW_MACHINE_INSTRUCTIONS];
+	if (unlikely(fevent->bStarted) && fevent->data != 0) {
+		fevent->curr_count += csr_read_num(CSR_MINSTRET) - fevent->data;
+		fevent->data = 0;
+	}
+}
+
 unsigned long sbi_pmu_num_ctr(void)
 {
 	return (num_hw_ctrs + SBI_PMU_FW_CTR_MAX);
@@ -583,11 +689,9 @@ void sbi_pmu_exit(struct sbi_scratch *scratch)
 {
 	u32 hartid = current_hartid();
 
-	/* SBI PMU is not supported if mcountinhibit is not available */
-	if (!sbi_hart_has_feature(scratch, SBI_HART_HAS_MCOUNTINHIBIT))
-		return;
+	if (sbi_hart_has_feature(scratch, SBI_HART_HAS_MCOUNTINHIBIT))
+		csr_write(CSR_MCOUNTINHIBIT, 0xFFFFFFF8);
 
-	csr_write(CSR_MCOUNTINHIBIT, 0xFFFFFFF8);
 	csr_write(CSR_MCOUNTEREN, 7);
 	pmu_reset_event_map(hartid);
 }
@@ -596,10 +700,6 @@ int sbi_pmu_init(struct sbi_scratch *scratch, bool cold_boot)
 {
 	const struct sbi_platform *plat;
 	u32 hartid = current_hartid();
-
-	/* SBI PMU is not supported if mcountinhibit is not available */
-	if (!sbi_hart_has_feature(scratch, SBI_HART_HAS_MCOUNTINHIBIT))
-		return 0;
 
 	if (cold_boot) {
 		plat = sbi_platform_ptr(scratch);

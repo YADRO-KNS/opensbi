@@ -23,7 +23,7 @@
 #define SBI_PMU_FW_EVENT_MAX 32
 
 /* Counter related macros */
-#define SBI_PMU_FW_CTR_MAX 16
+#define SBI_PMU_FW_CTR_MAX SBI_PMU_FW_MAX
 #define SBI_PMU_HW_CTR_MAX 32
 #define SBI_PMU_CTR_MAX	   (SBI_PMU_HW_CTR_MAX + SBI_PMU_FW_CTR_MAX)
 
@@ -69,5 +69,8 @@ int sbi_pmu_ctr_cfg_match(unsigned long cidx_base, unsigned long cidx_mask,
 			  uint64_t event_data);
 
 int sbi_pmu_ctr_incr_fw(enum sbi_pmu_fw_event_code_id fw_id);
+
+void sbi_pmu_ctr_mm_enter();
+void sbi_pmu_ctr_mm_exit();
 
 #endif
