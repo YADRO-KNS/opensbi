@@ -23,16 +23,19 @@ struct gpio_reset {
 	struct gpio_pin pin;
 	u32 active_delay;
 	u32 inactive_delay;
+	u8 priority;
 };
 
 static struct gpio_reset poweroff = {
 	.active_delay = 100,
-	.inactive_delay = 100
+	.inactive_delay = 100,
+	.priority = 128
 };
 
 static struct gpio_reset restart = {
 	.active_delay = 100,
-	.inactive_delay = 100
+	.inactive_delay = 100,
+	.priority = 128
 };
 
 static struct gpio_reset *gpio_get_reset_settings(u32 type)
@@ -59,7 +62,12 @@ static struct gpio_reset *gpio_get_reset_settings(u32 type)
 
 static int gpio_system_reset_check(u32 type, u32 reason)
 {
-	return !!gpio_get_reset_settings(type);
+	struct gpio_reset *reset = gpio_get_reset_settings(type);
+
+	if (reset)
+		return reset->priority;
+
+	return 0;
 }
 
 static void gpio_system_reset(u32 type, u32 reason)
@@ -114,6 +122,10 @@ static int gpio_reset_init(void *fdt, int nodeoff,
 	val = fdt_getprop(fdt, nodeoff, "inactive-delay-ms", &len);
 	if (len > 0)
 		reset->inactive_delay = fdt32_to_cpu(*val);
+
+	val = fdt_getprop(fdt, nodeoff, "priority", &len);
+	if (len > 0)
+		reset->priority = fdt32_to_cpu(*val);
 
 	sbi_system_reset_add_device(&gpio_reset);
 
