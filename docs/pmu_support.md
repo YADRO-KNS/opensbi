@@ -49,13 +49,19 @@ represent a bitmap of all the MHPMCOUNTERx. This property is mandatory if
 event-to-mhpmevent is present. Otherwise, it can be omitted. This property
 shouldn't encode any raw event.
 
-* **riscv,raw-event-to-mhpmcounters**(Optional) - It represents an ONE-to-MANY
-mapping between a raw event and all the MHPMCOUNTERx in a bitmap format that can
-be used to monitor that raw event. The information is encoded in a table format
-where each raw represent a specific raw event. The first column stores the
-expected event selector value that should be encoded in the expected value to be
-written in MHPMEVENTx. The second column stores a bitmap of all the MHPMCOUNTERx
-that can be used for monitoring the specified event.
+* **pmu,raw-event-to-mhpmcounters**(Optional) - It represents a ONE-to-MANY
+or MANY-to-MANY mapping between the raw event(s) and all the MHPMCOUNTERx in
+a bitmap format that can be used to monitor that raw event, which depends on
+how the platform encodes the monitor events. Currently, only the following three
+encoding methods are supported, encoding each event as a number, using a bitmap
+to encode monitor events, and mixing the previous two methods. The information
+is encoded in a table format where each raw represent the specific raw event(s).
+The first and second column represents a selector value, which probably means a
+monitor event ID (encoded by a number) or an event set (encoded by a bitmap).
+To correctly decode this selector value, each platform needs to define a
+select_mask in the third and fourth column to indicate which bits of the
+selector value are encoded by a number. The fifth column stores a bitmap of all
+the MHPMCOUNTERx that can be used for monitoring the specified event(s).
 
 *Note:* A platform may choose to provide the mapping between event & counters
 via platform hooks rather than the device tree.
@@ -72,8 +78,8 @@ pmu {
 						  <0x00002 0x00002 0x00000004>,
 						  <0x00003 0x0000A 0x00000ff8>,
 						  <0x10000 0x10033 0x000ff000>,
-	riscv,raw-event-to-mhpmcounters 	= <0x0000 0x0002 0x00000f8>,
-					  <0x0000 0x0003 0x00000ff0>,
+	pmu,raw-event-to-mhpmcounters 	= <0x0000 0x0002 0xffffffff 0xffffffff 0x00000f8>,
+					  <0x0000 0x0003 0xffffffff 0xffffffff 0x00000ff0>,
 };
 
 ```
